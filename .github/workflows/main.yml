@@ -1,0 +1,51 @@
+name: Build libtorrent on Windows
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    
+    - name: Set up MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        update: true
+
+    - name: Install dependencies
+      run: |
+        pacman -Syu --noconfirm
+        pacman -S --noconfirm base-devel mingw-w64-x86_64-toolchain \
+        mingw-w64-x86_64-cmake mingw-w64-x86_64-libtorrent-rasterbar
+
+    - name: Set up environment
+      run: |
+        echo "::add-path::C:/msys64/mingw64/bin"
+    
+    - name: Build libtorrent
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+        mingw32-make -j$(nproc)
+
+    - name: Package the build
+      run: |
+        cd build
+        # Adjust the path and output directory as per the requirements
+        zip -r libtorrent-windows.zip *
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: libtorrent-windows
+        path: build/libtorrent-windows.zip
