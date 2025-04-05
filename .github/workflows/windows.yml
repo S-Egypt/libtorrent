@@ -26,8 +26,8 @@ jobs:
           submodules: 'recursive' # Checkout submodules like try_signal, required for build
 
       - name: Setup vcpkg environment
-        # uses: microsoft/vcpkg-action@v1  <- Previous incorrect version
-        uses: microsoft/vcpkg-action@v6    # <- Updated to a current, valid version
+        # uses: microsoft/vcpkg-action@v6    <- Previous attempt
+        uses: microsoft/vcpkg-action@v6.1.1  # <- Updated to specific version tag
         id: vcpkg # Give the step an id to reference its outputs
         with:
           # Specify packages needed for libtorrent build
@@ -38,7 +38,7 @@ jobs:
           # Optional: Pin vcpkg version for reproducibility
           # vcpkg-commit-id: '<specific vcpkg commit hash>'
 
-      # Corrected caching step:
+      # Caching step:
       - name: Cache vcpkg Archives
         uses: actions/cache@v4
         with:
