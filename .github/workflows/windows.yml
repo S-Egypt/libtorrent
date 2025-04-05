@@ -26,7 +26,8 @@ jobs:
           submodules: 'recursive' # Checkout submodules like try_signal, required for build
 
       - name: Setup vcpkg environment
-        uses: microsoft/vcpkg-action@v1
+        # uses: microsoft/vcpkg-action@v1  <- Previous incorrect version
+        uses: microsoft/vcpkg-action@v6    # <- Updated to a current, valid version
         id: vcpkg # Give the step an id to reference its outputs
         with:
           # Specify packages needed for libtorrent build
@@ -113,10 +114,12 @@ jobs:
           # encryption=openssl : Enable OpenSSL support (vcpkg should make it findable)
           # --prefix=./_stage  : Define where to 'install' headers and libs
           # install            : The b2 target to build and copy files to prefix
-          # -j<N>              : Specify number of cores (b2 often autodetects well, omit for safety or use $(nproc) equiv on windows)
+          # -j<N>              : Specify number of cores. Let's use PowerShell to get the count.
           # toolset=msvc       : Should be detected automatically on windows-latest
 
-          b2 address-model=64 variant=release link=static runtime-link=static encryption=openssl --prefix=./_stage install -j$(Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
+          $CoreCount = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
+          echo "Using $CoreCount logical processors for the build."
+          b2 address-model=64 variant=release link=static runtime-link=static encryption=openssl --prefix=./_stage install "-j$CoreCount"
 
           echo "Build finished."
         env:
