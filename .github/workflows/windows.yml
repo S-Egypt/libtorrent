@@ -1,9 +1,10 @@
+# .github/workflows/build-windows-portable.yml
 name: Build Portable Windows libtorrent
 
 on:
   push:
     branches:
-      - RC_1_2 # Adjust branches as needed
+      - RC_1_2 # Adjust branches for the specific libtorrent versions you target
       - RC_2_0
       - master
   pull_request:
@@ -11,85 +12,133 @@ on:
       - RC_1_2
       - RC_2_0
       - master
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch: # Allows manual triggering via the GitHub Actions UI
 
 jobs:
   build-windows-x64-static:
-    name: Build Windows x64 Static Release
-    runs-on: windows-latest
+    name: Build Windows x64 Static Release (Portable)
+    runs-on: windows-latest # Use the latest available Windows runner
 
     steps:
       - name: Checkout libtorrent repository
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # Important for libtorrent dependencies
+          submodules: 'recursive' # Checkout submodules like try_signal, required for build
 
-      - name: Setup vcpkg
-        uses: microsoft/vcpkg-action@v1 # Or use manual setup if preferred
+      - name: Setup vcpkg environment
+        uses: microsoft/vcpkg-action@v1
         id: vcpkg # Give the step an id to reference its outputs
         with:
-          # Define packages and triplet
-          vcpkg-packages: boost-build boost openssl zlib # boost-build provides b2
-          vcpkg-triplet: x64-windows-static # Static libraries + static CRT
-          # vcpkg-commit-id: '<specific vcpkg commit hash>' # Optional: Pin vcpkg version
+          # Specify packages needed for libtorrent build
+          # boost-build provides the b2 build tool
+          vcpkg-packages: boost-build boost openssl zlib
+          # Use the static triplet: static libs + static C/C++ runtime (for portability)
+          vcpkg-triplet: x64-windows-static
+          # Optional: Pin vcpkg version for reproducibility
+          # vcpkg-commit-id: '<specific vcpkg commit hash>'
 
+      # Corrected caching step:
       - name: Cache vcpkg Archives
         uses: actions/cache@v4
         with:
+          # Path to the vcpkg downloaded package archives
           path: ${{ steps.vcpkg.outputs.vcpkg-root }}/archives
-          key: ${{ runner.os }}-vcpkg-archives-${{ hashFiles(steps.vcpkg.outputs.vcpkg-root.'/vcpkg-lock.json') }} # Adjust key as needed
+          # Robust cache key: depends on OS, triplet, and changes to this workflow file
+          key: ${{ runner.os }}-vcpkg-archives-${{ steps.vcpkg.outputs.vcpkg-triplet }}-${{ hashFiles('.github/workflows/build-windows-portable.yml') }}
+          # Fallback keys if exact match is not found
           restore-keys: |
+            ${{ runner.os }}-vcpkg-archives-${{ steps.vcpkg.outputs.vcpkg-triplet }}-
             ${{ runner.os }}-vcpkg-archives-
 
-      - name: Install dependencies using vcpkg
-        shell: pwsh # Use PowerShell
+      - name: Install dependencies and Integrate vcpkg
+        shell: pwsh # Use PowerShell for Windows runner commands
         run: |
-          cd "${{ steps.vcpkg.outputs.vcpkg-root }}"
-          echo "Installing packages: ${{ steps.vcpkg.outputs.vcpkg-packages-list }} for triplet ${{ steps.vcpkg.outputs.vcpkg-triplet }}"
-          # The vcpkg-action should have already run install, but we run integrate
+          $VCPKG_ROOT = "${{ steps.vcpkg.outputs.vcpkg-root }}"
+          cd "$VCPKG_ROOT"
+
+          # Integrate vcpkg with the build environment (makes headers/libs findable)
           .\vcpkg integrate install
-          echo "Listing installed packages..."
-          .\vcpkg list # Verify installation
+          echo "vcpkg integration complete."
 
-          # Add vcpkg installed tools (like b2) to PATH for this job
-          $VCPKG_TOOLS_PATH = "${{ steps.vcpkg.outputs.vcpkg-root }}\installed\${{ steps.vcpkg.outputs.vcpkg-triplet }}\tools\boost-build"
-          echo "Adding $VCPKG_TOOLS_PATH to PATH"
-          echo "$VCPKG_TOOLS_PATH" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # Verify installed packages (optional, good for debugging)
+          echo "Listing installed vcpkg packages for triplet ${{ steps.vcpkg.outputs.vcpkg-triplet }}..."
+          .\vcpkg list --triplet ${{ steps.vcpkg.outputs.vcpkg-triplet }}
 
-      - name: Verify b2 is available
+          # Add vcpkg installed tools (specifically b2 from boost-build) to the PATH
+          # The path includes the triplet directory
+          $VCPKG_TOOLS_PATH = Join-Path -Path $VCPKG_ROOT -ChildPath "installed/${{ steps.vcpkg.outputs.vcpkg-triplet }}/tools/boost-build"
+          if (Test-Path $VCPKG_TOOLS_PATH) {
+              echo "Adding $VCPKG_TOOLS_PATH to PATH"
+              echo "$VCPKG_TOOLS_PATH" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+              echo "WARNING: vcpkg boost-build tools directory not found at $VCPKG_TOOLS_PATH"
+              # Attempt common alternative if needed (older vcpkg versions?)
+              $VCPKG_TOOLS_PATH_ALT = Join-Path -Path $VCPKG_ROOT -ChildPath "packages/boost-build_${{ steps.vcpkg.outputs.vcpkg-triplet }}/tools/boost-build"
+              if (Test-Path $VCPKG_TOOLS_PATH_ALT) {
+                 echo "Adding alternative path $VCPKG_TOOLS_PATH_ALT to PATH"
+                 echo "$VCPKG_TOOLS_PATH_ALT" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              } else {
+                 echo "ERROR: Cannot find boost-build tools directory!"
+                 exit 1
+              }
+          }
+        env:
+           # Pass VCPKG_ROOT explicitly might help some tools find it, though integrate should handle most cases
+           VCPKG_ROOT: ${{ steps.vcpkg.outputs.vcpkg-root }}
+
+      - name: Verify b2 is available in PATH
         shell: pwsh
         run: |
           echo "Searching for b2..."
-          Get-Command b2 -ErrorAction SilentlyContinue
-          if ($?) {
-            echo "b2 found in PATH:"
-            (Get-Command b2).Path
+          $B2Cmd = Get-Command b2 -ErrorAction SilentlyContinue
+          if ($B2Cmd) {
+            echo "b2 found at: $($B2Cmd.Path)"
+            echo "Running b2 --version:"
             b2 --version
           } else {
-            echo "ERROR: b2 not found in PATH!"
+            echo "ERROR: b2 command not found in PATH!"
+            echo "Current PATH: $env:PATH"
             exit 1
           }
 
-      - name: Build libtorrent with b2
+      - name: Build libtorrent using b2
         shell: pwsh
         run: |
           echo "Starting libtorrent build..."
-          # Build static library, release variant, static runtime, x64, with OpenSSL
-          # -j flag lets b2 use multiple cores, detected automatically usually
-          # --prefix specifies install location
-          # toolset=msvc should be auto-detected on windows-latest
-          b2 address-model=64 variant=release link=static runtime-link=static encryption=openssl --prefix=./_stage install
-          echo "Build finished."
+          # Run b2 build:
+          # address-model=64   : Target 64-bit
+          # variant=release    : Optimized build, no debug symbols
+          # link=static        : Build libtorrent itself as a static library (.lib)
+          # runtime-link=static: Link against the static C/C++ runtime (/MT) - crucial for portability
+          # encryption=openssl : Enable OpenSSL support (vcpkg should make it findable)
+          # --prefix=./_stage  : Define where to 'install' headers and libs
+          # install            : The b2 target to build and copy files to prefix
+          # -j<N>              : Specify number of cores (b2 often autodetects well, omit for safety or use $(nproc) equiv on windows)
+          # toolset=msvc       : Should be detected automatically on windows-latest
 
-      - name: List Build Output
+          b2 address-model=64 variant=release link=static runtime-link=static encryption=openssl --prefix=./_stage install -j$(Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
+
+          echo "Build finished."
+        env:
+           # Ensure vcpkg variables are available if needed by b2 internals
+           VCPKG_TARGET_TRIPLET: ${{ steps.vcpkg.outputs.vcpkg-triplet }}
+           VCPKG_ROOT: ${{ steps.vcpkg.outputs.vcpkg-root }}
+
+      - name: List Build Output Directory Contents
         shell: pwsh
         run: |
-          echo "Contents of installation directory (_stage):"
-          Get-ChildItem -Recurse -Path ./_stage
+          if (Test-Path -Path ./_stage) {
+              echo "Contents of installation directory (_stage):"
+              Get-ChildItem -Recurse -Path ./_stage
+          } else {
+              echo "ERROR: Build output directory './_stage' not found!"
+              exit 1
+          }
 
-      - name: Upload Artifact
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libtorrent-windows-x64-static-${{ github.sha }} # Include SHA for uniqueness
-          path: ./_stage # Upload the install directory (contains include/ and lib/)
-          if-no-files-found: error # Fail if build didn't produce output
+          name: libtorrent-windows-x64-static-${{ github.sha }} # Unique artifact name
+          path: ./_stage # Upload the directory containing include/ and lib/
+          if-no-files-found: error # Fail the workflow if the _stage dir is empty or missing
+          retention-days: 7 # Optional: Keep artifact for 7 days (default is 90)
