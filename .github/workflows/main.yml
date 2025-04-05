@@ -45,7 +45,7 @@ jobs:
         zip -r libtorrent-windows.zip *
 
     - name: Upload build artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3  # Updated to v3
       with:
         name: libtorrent-windows
         path: build/libtorrent-windows.zip
